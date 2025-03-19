@@ -1,0 +1,117 @@
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QFileDialog, QVBoxLayout, QHBoxLayout, QWidget, QLabel
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QPixmap, QImage
+import cv2
+import sys
+
+class VideoThread(QThread):
+    update_frame = Signal(QImage)
+
+    def __init__(self):
+        super().__init__()
+        self.cap = None
+        self.running = False
+
+    def set_video_source(self, video_path):
+        self.cap = cv2.VideoCapture(video_path)
+
+    def run(self):
+        self.running = True
+        while self.cap.isOpened() and self.running:
+            ret, frame = self.cap.read()
+            if not ret:
+                break
+            
+            # Convert frame to QImage
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = frame.shape
+            bytes_per_line = ch * w
+            qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            self.update_frame.emit(qimg)
+
+    def stop(self):
+        self.running = False
+        self.quit()
+        self.wait()
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Vehicle Detection System")
+        self.setGeometry(100, 100, 1280, 720)
+        self.setMinimumSize(684, 437)  # Enforce minimum window size
+        
+        # Main Layout
+        main_layout = QVBoxLayout()
+        
+        self.video_label = QLabel("No Video Selected")
+        self.video_label.setAlignment(Qt.AlignCenter)
+        self.video_label.setScaledContents(True)  # Ensure scaling
+        main_layout.addWidget(self.video_label)
+        
+        # Control Buttons Layout
+        button_layout = QHBoxLayout()
+        
+        self.select_button = QPushButton("Select File")
+        self.select_button.clicked.connect(self.select_file)
+        button_layout.addWidget(self.select_button)
+
+        self.play_pause_button = QPushButton("Play/Pause")
+        self.play_pause_button.clicked.connect(self.toggle_play_pause)
+        button_layout.addWidget(self.play_pause_button)
+
+        self.quit_button = QPushButton("Quit")
+        self.quit_button.clicked.connect(self.close)
+        button_layout.addWidget(self.quit_button)
+        
+        main_layout.addLayout(button_layout)
+        
+        container = QWidget()
+        container.setLayout(main_layout)
+        self.setCentralWidget(container)
+
+        # Video Thread
+        self.video_thread = VideoThread()
+        self.video_thread.update_frame.connect(self.display_frame)
+        self.video_path = ""
+        self.video_playing = False
+
+    def select_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Video File", "", "Videos (*.mp4 *.mov *.avi)")
+        if file_path:
+            self.video_path = file_path
+            cap = cv2.VideoCapture(file_path)
+            ret, frame = cap.read()
+            cap.release()
+            if ret:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                h, w, ch = frame.shape
+                bytes_per_line = ch * w
+                qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+                pixmap = QPixmap.fromImage(qimg)
+                self.video_label.setPixmap(pixmap)
+                self.video_label.setScaledContents(True)
+            else:
+                self.video_label.setText("Failed to load thumbnail")
+
+    def toggle_play_pause(self):
+        if self.video_path:
+            if self.video_playing:
+                self.video_thread.stop()
+            else:
+                self.video_thread.set_video_source(self.video_path)
+                self.video_thread.start()
+            self.video_playing = not self.video_playing
+        else:
+            self.video_label.setText("Please select a video first.")
+
+    def display_frame(self, qimg):
+        pixmap = QPixmap.fromImage(qimg)
+        self.video_label.setPixmap(pixmap)
+        self.video_label.setScaledContents(True)
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
