@@ -25,7 +25,7 @@ classNames = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "trai
 mask = cv2.imread("assets/mask-1280-720.png")
  
 # Tracking
-tracker = Sort(max_age=5, min_hits=3, iou_threshold=0.3)
+tracker = Sort(max_age=20, min_hits=3, iou_threshold=0.3)
 
 limits = [400, 297, 673, 297]
 totalCount = []

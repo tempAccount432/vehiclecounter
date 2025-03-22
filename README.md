@@ -8,7 +8,8 @@ Attribution to the
 
 Sort
 
-1. figure out by yt murtuza
+1. figure out by yt murtuza -> did and changes from yolob8l.pt to yolo8n.pt reducing speed 
+    a. understand sort from murtuza and make the changes in that line of code if you feel it 
 2. figure out by reading sort doc
 3. figure out by gpt chat that is there
 4. figure out y the person who has made the counter * 2
