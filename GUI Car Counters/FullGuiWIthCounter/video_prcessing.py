@@ -81,8 +81,9 @@ class VideoThread(QThread):
                         currentArray = np.array([x1, y1, x2, y2, conf])
                         detections = np.vstack((detections, currentArray))
             resultsTracker = self.tracker.update(detections)
-
-            cv2.line(img, (self.limits[0], self.limits[1]), (self.limits[2], self.limits[3]), (0, 0, 255), 5)
+             
+            start_x, start_y, end_x, end_y = self.limits
+            cv2.line(img, (start_x, start_y), (end_x,end_y), (0, 0, 255), 5)
             for result in resultsTracker:
                 x1, y1, x2, y2, id = map(int, result)
                 print(result)
