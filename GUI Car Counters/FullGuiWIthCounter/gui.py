@@ -1,11 +1,11 @@
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QSpinBox, QFileDialog, QMessageBox, QBoxLayout, QGroupBox
+    QSpinBox, QFileDialog, QMessageBox, QGroupBox
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QImage, QIcon
 import cv2
-from video_prcessing import VideoThread
+from video_processing import VideoThread
 
 class MainWindow(QMainWindow):
     # Global var for the main window
@@ -18,6 +18,7 @@ class MainWindow(QMainWindow):
         self.video_path = None
         self.mask_path = None
         self.is_playing = False
+        self.file_path_changed = False
         self.initUI()
 
     def initUI(self): 
@@ -26,6 +27,7 @@ class MainWindow(QMainWindow):
         # self.setGeometry(100, 100, 684, 437)
         self.setGeometry(100, 100, 900, 600)
         self.setMinimumSize(684, 437)
+        # self.setFixedSize(684, 437)
 
         # Main central widget
         central_widget = QWidget()
@@ -33,16 +35,10 @@ class MainWindow(QMainWindow):
 
         # Main Layout (Horizontal)
         main_layout = QHBoxLayout(central_widget)
-        # Remove margins/spaces
-        # main_layout.setContentsMargins(0, 0, 0, 0)
-        # main_layout.setSpacing(0)
 
         # Left Panel (Buttons & Inputs)
-        left_panel_widget = QWidget()  # Wrap layout in QWidget
+        left_panel_widget = QWidget()
         left_panel = QVBoxLayout(left_panel_widget) 
-        # **Key**: Remove margins & spacing, align top
-        # left_panel.setContentsMargins(0, 0, 0, 0)
-        # left_panel.setSpacing(0)
         left_panel.setAlignment(Qt.AlignTop)
 
         # Select File Button
@@ -55,10 +51,6 @@ class MainWindow(QMainWindow):
         self.select_mask_btn.clicked.connect(self.select_mask)
         self.select_mask_btn.setEnabled(False)
         left_panel.addWidget(self.select_mask_btn)
-
-        # Count Line Section
-        # count_line_label = QLabel("Count Line")
-        # left_panel.addWidget(count_line_label)
 
         count_line_group = QGroupBox("Count Line")   # Title
         count_line_layout = QVBoxLayout(count_line_group)
@@ -101,10 +93,7 @@ class MainWindow(QMainWindow):
         main_layout.setStretchFactor(left_panel_widget, 1)  
         main_layout.setStretchFactor(self.video_label, 4)
 
-        # Optionally, set a minimum width to the right panel
-        # so it doesn't shrink too small
         self.video_label.setMinimumWidth(400)
-
         central_widget.setLayout(main_layout)
 
 
@@ -119,64 +108,85 @@ class MainWindow(QMainWindow):
         return spinbox, layout
 
     def select_file(self):
-        # Select the video file and sets the image
+        self.file_path_changed = False
+        if self.is_playing:
+            self.stop_video()
+
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Video File", "", "Videos (*.mp4 *.mov *.avi)")
         if file_path:
-            if self.is_playing:
-                self.stop_video()
-            self.video_path = file_path
-            self.set_thumbnail(file_path)
+           self.video_path = file_path
+           self.file_path_changed = True
+
+           self.video_thread.stop() 
+           self.video_thread.totalCount = []
+           self.video_thread.set_video_source(self.video_path)
+           
+           self.set_thumbnail(file_path)
+           self.select_mask_btn.setEnabled(True)
+           self.play_pause_btn.setEnabled(False)
+
+           # If we already have a mask_path, check if it still matches the new video
+        if self.mask_path:
+            if self.is_mask_valid_for_video(self.mask_path, self.video_path):
+                # If the old mask is still valid, re-enable Play
+                self.play_pause_btn.setEnabled(True)
+            else:
+                # Old mask is invalid for new video
+                self.play_pause_btn.setEnabled(False)
+                QMessageBox.information(
+                    self, "Mask Invalid",
+                    "The previously selected mask does not match the new video's size. Please select a new mask."
+                )
+                self.mask_path = None
     
     def get_image_size(self, image_path):
-        """Returns width and height of an image using OpenCV."""
         img = cv2.imread(image_path)
         if img is None:
             return None
         return img.shape[1], img.shape[0]  # (width, height)
 
-    def get_video_size(self, video_path):
+    def get_video_size(self,video_path):
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             return None
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         cap.release()
-        return width, height
+        return (width, height)
 
     def select_mask(self):
-        """Handles mask selection and validation."""
+        if self.is_playing:
+            # Do not allow changing mask while playing
+            QMessageBox.warning(self, "Warning", "Pause the video before selecting a new mask.")
+            return
+        
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Mask Image", "", "PNG Images (*.png)")
         if not file_path:
-            return  # User canceled the file selection
+            return 
 
         mask_size = self.get_image_size(file_path)
-
-        # Ensure mask was loaded successfully
         if mask_size is None:
             QMessageBox.critical(self, "Error", "Failed to load mask image. Please select a valid PNG file.")
             return
 
-        # Ensure a video is already selected before proceeding
         if not self.video_path:
             QMessageBox.warning(self, "Warning", "Please select a video first before adding a mask.")
             return
 
-        # Get video size
-        video_size = self.get_video_size(self.video_path)
-        if video_size is None:
-            QMessageBox.critical(self, "Error", "Failed to read video properties.")
+        if not self.is_mask_valid_for_video(file_path, self.video_path):
             return
 
-        # Compare mask and video sizes
-        if mask_size != video_size:
-            QMessageBox.critical(self, "Size Mismatch", "The mask size does not match the video size!")
+        # video_size = self.get_video_size(self.video_path)
+        # if video_size is None:
+        #     QMessageBox.critical(self, "Error", "Failed to read video properties.")
+        #     return
+
+        # if mask_size != video_size:
+        #     QMessageBox.critical(self, "Size Mismatch", "The mask size does not match the video size!")
             return
 
-        # Now safe to assign the mask path
         self.mask_path = file_path
         self.video_thread.set_mask_source(self.mask_path)
-
-        # Enable the play button since both video and mask are valid
         self.play_pause_btn.setEnabled(True)
         QMessageBox.information(self, "Mask Loaded", "Mask successfully loaded!")
 
@@ -192,43 +202,106 @@ class MainWindow(QMainWindow):
             pixmap = QPixmap.fromImage(qimg)
             self.video_label.setPixmap(pixmap)
             self.video_label.setScaledContents(True)
-            self.select_mask_btn.setEnabled(True)
+            self.select_mask_btn.setEnabled(True) # Maybe I want to remove this line
         else:
             self.video_label.setText("Failed to load thumbnail")
 
-    def toggle_play_pause(self):
-        if self.is_playing:
-            self.video_thread.pause()
-            self.is_playing = False
-            self.play_pause_btn.setText("Play")
-             # Update the count line limits
-            self.video_thread.limits = [
-                self.startx_spinbox[0].value(),
-                self.starty_spinbox[0].value(),
-                self.endx_spinbox[0].value(),
-                self.endy_spinbox[0].value()
-            ]
-        else:
-            if self.video_thread.paused:  # Resume instead of restarting
-                self.video_thread.resume()
-            else:
+# DON'T DELETE THIS FUNCTION
+    # def toggle_play_pause(self): 
+    #     if self.is_playing:
+    #         self.video_thread.pause()
+    #         self.is_playing = False
+    #         self.play_pause_btn.setText("Play")
+            
+    #         # Re-enable select file & select mask
+    #         self.select_file_btn.setEnabled(True)
+    #         self.select_mask_btn.setEnabled(True)
+    #     else:
+    #         if self.video_thread.paused: 
+    #             self.video_thread.resume()
+    #         else:
+    #             self.start_video()
+    #             self.is_playing = True
+    #         self.play_pause_btn.setText("Pause")
+    #         self.select_file_btn.setEnabled(False)
+    #         self.select_mask_btn.setEnabled(False)
+    def toggle_play_pause(self): 
+            if self.is_playing:
+                self.video_thread.pause()
+                self.is_playing = False
+                self.play_pause_btn.setText("Play")
+                self.select_file_btn.setEnabled(True)
+                self.select_mask_btn.setEnabled(True)
+
+            elif self.is_playing == False and self.file_path_changed == True:
+                self.is_playing = True
+                self.start_video_from_start()
+                print("from 1st elif")
+                self.play_pause_btn.setText("Pause")
+                self.select_file_btn.setEnabled(False)
+                self.select_mask_btn.setEnabled(False)
+                self.file_path_changed = False
+            elif self.is_playing ==False:
+                # self.video_thread.resume()
                 self.start_video()
-            self.is_playing = True
-            self.play_pause_btn.setText("Pause")
+                self.play_pause_btn.setText("Pause")
+                self.select_file_btn.setEnabled(False)
+                self.select_mask_btn.setEnabled(False)
+                print("from  2nd elif")
+
+                
+                
 
     def start_video(self):
-        if self.video_path:
-            self.video_thread.set_video_source(self.video_path)
-            self.video_thread.start()
-            self.is_playing = True
-        else:
+        if not self.video_path:
             self.video_label.setText("Please select a video first.")
-            # self.is_playing = False
+            self.is_playing = False
             self.play_pause_btn.setText("Play")
+            return
+
+        # Update the count line limits
+        self.video_thread.limits = [
+            self.startx_spinbox[0].value(),
+            self.starty_spinbox[0].value(),
+            self.endx_spinbox[0].value(),
+            self.endy_spinbox[0].value()
+        ]
+
+        # self.video_thread.stop()          
+        # self.video_thread.totalCount = []  
+        # self.video_thread.set_video_source(self.video_path)
+        self.video_thread.resume()
+        self.is_playing = True
+
+    def start_video_from_start(self):
+        if not self.video_path:
+            self.video_label.setText("Please select a video first.")
+            self.is_playing = False
+            self.play_pause_btn.setText("Play")
+            return
+
+        # Update the count line limits
+        self.video_thread.limits = [
+            self.startx_spinbox[0].value(),
+            self.starty_spinbox[0].value(),
+            self.endx_spinbox[0].value(),
+            self.endy_spinbox[0].value()
+        ]
+
+        self.video_thread.stop()          
+        self.video_thread.totalCount = []  
+        self.video_thread.set_video_source(self.video_path)
+        self.video_thread.start()
+        self.is_playing = True
 
     def stop_video(self):
         self.video_thread.stop()
         self.is_playing = False
+        self.play_pause_btn.setText("Play")
+
+        # Re-enable file & mask selection
+        self.select_file_btn.setEnabled(True)
+        self.select_mask_btn.setEnabled(True)
 
     def closeEvent(self, event):
         reply = QMessageBox.question(
@@ -243,6 +316,24 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+    def is_mask_valid_for_video(self, mask_path, video_path):
+            """Check if existing/new mask matches the new video's size."""
+            mask_size = self.get_image_size(mask_path)
+            if mask_size is None:
+                QMessageBox.critical(self, "Error", "Failed to load mask image.")
+                return False
+
+            video_size = self.get_video_size(video_path)
+            if video_size is None:
+                QMessageBox.critical(self, "Error", "Failed to read video properties.")
+                return False
+
+            if mask_size != video_size:
+                QMessageBox.critical(self, "Size Mismatch", "The mask size does not match the video size!")
+                return False
+
+            return True
 
     def display_frame(self, qimg):
         pixmap = QPixmap.fromImage(qimg)

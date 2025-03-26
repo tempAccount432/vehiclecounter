@@ -26,6 +26,8 @@ class VideoThread(QThread):
         self.limits = [400, 297, 673, 297]
 
     def set_video_source(self, video_path):
+        if self.cap:
+            self.cap.release()
         self.cap = cv2.VideoCapture(video_path)
         self.current_frame_pos = 0
 
@@ -37,11 +39,11 @@ class VideoThread(QThread):
         self.paused = False
 
         # Resume from the last frame position
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_pos)
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
         while self.cap.isOpened() and self.running:
-            if self.paused: #probalby here is the problem
-                QThread.msleep(100)
+            if self.paused:
+                self.msleep(100)
                 continue
 
             ret, img = self.cap.read()
@@ -55,10 +57,13 @@ class VideoThread(QThread):
             else:
                 imgRegion = img 
  
+            # Optional graphics overlay
             imgGraphics = cv2.imread("assets/graphics.png", cv2.IMREAD_UNCHANGED)
-            img = cvzone.overlayPNG(img, imgGraphics, (0, 0))
-            results = self.model(imgRegion, stream=True)
+            if imgGraphics is not None:
+                img = cvzone.overlayPNG(img, imgGraphics, (0, 0))
 
+            # YOLO detection
+            results = self.model(imgRegion, stream=True)
             detections = np.empty((0, 5))
 
             for r in results:
@@ -80,6 +85,7 @@ class VideoThread(QThread):
                         # cvzone.cornerRect(img, (x1, y1, w, h), l=9, rt=5)
                         currentArray = np.array([x1, y1, x2, y2, conf])
                         detections = np.vstack((detections, currentArray))
+
             resultsTracker = self.tracker.update(detections)
              
             start_x, start_y, end_x, end_y = self.limits
@@ -95,24 +101,23 @@ class VideoThread(QThread):
                 cx, cy = x1 + w // 2, y1 + h // 2
                 cv2.circle(img, (cx, cy), 5, (255, 0, 255), cv2.FILLED)
 
-                if self.limits[0] < cx < self.limits[2] and self.limits[1] - 15 < cy < self.limits[1] + 15:
+                # Count line check
+                if (start_x < cx < end_x) and (start_y - 15 < cy < start_y + 15):
                     if id not in self.totalCount:
                         self.totalCount.append(id)
-                        cv2.line(img, (self.limits[0], self.limits[1]), (self.limits[2], self.limits[3]), (0, 255, 0), 5)
+                        cv2.line(img, (start_x, start_y), (end_x, end_y), (0, 255, 0), 5)
 
             # cvzone.putTextRect(img, f' Count: {len(totalCount)}', (50, 50))
             cv2.putText(img,str(len(self.totalCount)),(255,100),cv2.FONT_HERSHEY_PLAIN,5,(50,50,255),8)
 
-            if img is not None:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                h, w, ch = img.shape
-                bytes_per_line = ch * w
-                qimg = QImage(img.data, w, h, bytes_per_line, QImage.Format_RGB888)
-                self.update_frame.emit(qimg)
+
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            h, w, ch = img.shape
+            bytes_per_line = ch * w
+            qimg = QImage(img.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            self.update_frame.emit(qimg)
 
     def pause(self):
-        # self.paused = not self.paused
-        # print(self.paused)
         self.paused = True
 
     def resume(self):
